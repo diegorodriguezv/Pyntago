@@ -44,34 +44,80 @@ class BoardBuiltEvent(Event):
         self.board = board
 
 
-class GameStartedEvent(Event):
+# Keyboard events
+class MoveRequestEvent(Event):
+    def __init__(self, direction):
+        self.name = "Move request event"
+        self.direction = direction
+
+
+class SelectEvent(Event):
+    def __init__(self):
+        self.name = "Select event"
+
+
+# Marble events
+class PlaceMarbleEvent(Event):
+    def __init__(self, marble, player):
+        self.name = "Place marble event"
+        self.marble = marble
+        self.player = player
+
+
+# Block events
+class RotateBlockEvent(Event):
+    def __init__(self, block, player):
+        self.name = "Rotate block event"
+        self.block = block
+        self.player = player
+
+
+class MoveBlockCursorRequestEvent(Event):
+    def __init__(self, block_cursor, player, direction):
+        self.name = "Move block cursor request event"
+        self.block_cursor = block_cursor
+        self.player = player
+        self.direction = direction
+
+
+class MoveBlockCursorEvent(Event):
+    def __init__(self, block_cursor, player, direction):
+        self.name = "Move block cursor event"
+        self.block_cursor = block_cursor
+        self.player = player
+        self.direction = direction
+
+
+class SelectBlockCursorEvent(Event):
+    def __init__(self, block_cursor, player):
+        self.name = "Select block cursor request event"
+        self.block_cursor = block_cursor
+        self.player = player
+
+
+class PlaceBlockCursorEvent(Event):
+    def __init__(self, block_cursor):
+        self.name = "Place block cursor event"
+        self.block_cursor = block_cursor
+
+
+# Game events
+class GameMoveUIEvent(Event):
     def __init__(self, game):
-        self.name = "Game started event"
+        self.name = "Start move UI event"
         self.game = game
 
 
-class PlaceMarbleEvent(Event):
-    def __init__(self, marble):
-        self.name = "Place marble event"
-        self.marble = marble
+class GameRotateUIEvent(Event):
+    def __init__(self, game):
+        self.name = "Start rotate UI event"
+        self.game = game
 
 
-class RotateBlockEvent(Event):
-    def __init__(self, block):
-        self.name = "Rotate block event"
-        self.block = block
-
-
-class MoveCursorRequestEvent(Event):
-    def __init__(self, cursor):
-        self.name = "Move cursor request event"
-        self.cursor = cursor
-
-
-class SelectCursorRequestEvent(Event):
-    def __init__(self, cursor):
-        self.name = "Select cursor request event"
-        self.cursor = cursor
+class MessageUpdateEvent(Event):
+    def __init__(self, game):
+        self.name = "Message update event"
+        self.game = game
 
 
 class EventManager:
@@ -113,15 +159,15 @@ class KeyboardController:
                     if input_event.key == K_ESCAPE:
                         new_event = QuitEvent()
                     elif input_event.key == K_UP or input_event.key == K_w:
-                        new_event = MoveCursorRequestEvent(DIRECTION_UP)
+                        new_event = MoveRequestEvent(DIRECTION_UP)
                     elif input_event.key == K_DOWN or input_event.key == K_s:
-                        new_event = MoveCursorRequestEvent(DIRECTION_DOWN)
+                        new_event = MoveRequestEvent(DIRECTION_DOWN)
                     elif input_event.key == K_LEFT or input_event.key == K_a:
-                        new_event = MoveCursorRequestEvent(DIRECTION_LEFT)
+                        new_event = MoveRequestEvent(DIRECTION_LEFT)
                     elif input_event.key == K_RIGHT or input_event.key == K_d:
-                        new_event = MoveCursorRequestEvent(DIRECTION_RIGHT)
+                        new_event = MoveRequestEvent(DIRECTION_RIGHT)
                     elif input_event.key == K_RETURN:
-                        new_event = SelectCursorRequestEvent()
+                        new_event = SelectEvent()
                 if new_event:
                     self.manager.post(new_event)
 
@@ -142,6 +188,22 @@ class CycleController:
         if isinstance(event, QuitEvent):
             # stop the loop
             self.alive = False
+
+
+class BlockCursorSprite(pygame.sprite.Sprite):
+    def __init__(self, group=None):
+        pygame.sprite.Sprite.__init__(self, group)
+        self.image = pygame.Surface((300, 300))
+        self.image = self.image.convert_alpha()
+        self.image.fill(COLOR_TRANSPARENT)
+        pygame.draw.rect(self.image, COLOR_BLACK, (10, 10, 280, 280), 3)
+        self.rect = self.image.get_rect()
+        self.move_to = None
+
+    def update(self):
+        if self.move_to:
+            self.rect.center = self.move_to
+            self.move_to = None
 
 
 class BlockSprite(pygame.sprite.Sprite):
@@ -168,6 +230,19 @@ class MarbleSprite(pygame.sprite.Sprite):
         self.image.fill(marble.color)
 
 
+class TextSprite(pygame.sprite.Sprite):
+    def __init__(self, text, size, color, width, height):
+        pygame.sprite.Sprite.__init__(self)
+        self.text = text
+        self.font = pygame.font.SysFont("Arial", size)
+        self.text_surf = self.font.render(text, 1, color)
+        self.Surf = pygame.Surface((width, height))
+        w = self.text_surf.get_width()
+        h = self.text_surf.get_height()
+        self.Surf.blit(self.text_surf, width / 2 - w / 2, height / 2 - h / 2)
+
+
+
 class PygameView:
     def __init__(self, event_manager):
         self.manager = event_manager
@@ -177,10 +252,6 @@ class PygameView:
         pygame.display.set_caption("Pyntago")
         self.background = pygame.Surface(self.window.get_size())
         self.background.fill(COLOR_BLACK)
-        my_font = pygame.font.SysFont('Comic Sans MS', 30)
-        text = "Starting..."
-        text_img = my_font.render(text, 1, COLOR_WHITE)
-        self.background.blit(text_img, (0, 850))
         self.window.blit(self.background, (0, 0))
         pygame.display.flip()
         self.back_sprites = pygame.sprite.RenderUpdates()
@@ -201,10 +272,27 @@ class PygameView:
             column += 1
             new_sprite = BlockSprite(block, self.back_sprites)
             new_sprite.rect = block_position
+        # message_sprite = TextSprite()
+
+    def show_block_cursor(self, block_cursor):
+        cursor_sprite = BlockCursorSprite(self.front_sprites)
+        block_sprite = self.get_block_sprite(block_cursor.block)
+        cursor_sprite.rect.center = block_sprite.rect.center
+
+    def move_block_cursor(self, block_cursor):
+        block_cursor_sprite = self.get_block_cursor_sprite()
+        block_sprite = self.get_block_sprite(block_cursor.block)
+        block_cursor_sprite.move_to = block_sprite.rect.center
 
     def get_block_sprite(self, block):
         for sprite in self.back_sprites:
             if hasattr(sprite, "block") and sprite.block == block:
+                return sprite
+
+    def get_block_cursor_sprite(self):
+        for sprite in self.front_sprites:
+            # there will be only one
+            if isinstance(sprite, BlockCursorSprite):
                 return sprite
 
     def notify(self, event):
@@ -218,6 +306,11 @@ class PygameView:
             pygame.display.update(dirt_rects_front + dirty_rects_back)
         elif isinstance(event, BoardBuiltEvent):
             self.show_board(event.board)
+        elif isinstance(event, PlaceBlockCursorEvent):
+            self.show_block_cursor(event.block_cursor)
+        elif isinstance(event, MoveBlockCursorEvent):
+            self.move_block_cursor(event.block_cursor)
+
             # todo: PlaceMarbleEvent
             # todo: RotateBlockEvent
             # todo: MoveCursorRequestEvent
@@ -227,8 +320,8 @@ class PygameView:
 class Game:
     """Model of the game."""
     STATE_PREPARING = 'preparing'
-    STATE_RUNNING = 'running'
-    STATE_PAUSED = 'paused'
+    STATE_MOVE = 'awaiting move'
+    STATE_ROTATE = 'awaiting rotation'
 
     def __init__(self, event_manager):
         self.manager = event_manager
@@ -236,16 +329,31 @@ class Game:
         self.state = Game.STATE_PREPARING
         self.players = [Player(event_manager, "White", COLOR_WHITE), Player(event_manager, "Black", COLOR_BLACK)]
         self.board = Board(event_manager)
+        self.current_player = self.players[0]
+        self.message = "%s's turn".format(self.current_player)
+        self.block_cursor = BlockCursor(event_manager)
 
     def start(self):
         self.board.build()
-        self.state = Game.STATE_RUNNING
-        self.manager.post(GameStartedEvent(self))
+        self.state = Game.STATE_MOVE
+        # todo: just to test bock cursor movement
+        self.state = Game.STATE_ROTATE
+        self.manager.post(GameRotateUIEvent(self))
 
     def notify(self, event):
         if isinstance(event, CycleEvent):
             if self.state == Game.STATE_PREPARING:
                 self.start()
+        if isinstance(event, PlaceMarbleEvent):
+            if self.state == Game.STATE_MOVE:
+                self.state = Game.STATE_ROTATE
+        if isinstance(event, RotateBlockEvent):
+            if self.state == Game.STATE_ROTATE:
+                self.state = Game.STATE_MOVE
+        if isinstance(event, MoveRequestEvent):
+            if self.state == Game.STATE_ROTATE:
+                self.manager.post(MoveBlockCursorRequestEvent(self.block_cursor,
+                                                              self.current_player, event.direction))
 
 
 class Player:
@@ -274,12 +382,19 @@ class Board:
         self.manager = event_manager
         self.state = Board.STATE_PREPARING
         self.blocks = []
+        self.start_block_index = 0
 
     def build(self):
         for i in range(4):
             self.blocks.append(Block(self.manager))
-
-        # todo: declare neighbors
+        self.blocks[2].neighbors[DIRECTION_UP] = self.blocks[0]
+        self.blocks[3].neighbors[DIRECTION_UP] = self.blocks[1]
+        self.blocks[0].neighbors[DIRECTION_RIGHT] = self.blocks[1]
+        self.blocks[2].neighbors[DIRECTION_RIGHT] = self.blocks[3]
+        self.blocks[1].neighbors[DIRECTION_LEFT] = self.blocks[0]
+        self.blocks[3].neighbors[DIRECTION_LEFT] = self.blocks[2]
+        self.blocks[0].neighbors[DIRECTION_DOWN] = self.blocks[2]
+        self.blocks[1].neighbors[DIRECTION_DOWN] = self.blocks[3]
         self.state = Board.STATE_BUILT
         self.manager.post(BoardBuiltEvent(self))
 
@@ -289,7 +404,47 @@ class Block:
 
     def __init__(self, event_manager):
         self.manager = event_manager
-        # todo: declare neighbors
+        self.neighbors = list(range(4))
+        self.neighbors[DIRECTION_UP] = None
+        self.neighbors[DIRECTION_DOWN] = None
+        self.neighbors[DIRECTION_LEFT] = None
+        self.neighbors[DIRECTION_RIGHT] = None
+
+    def move_possible(self, direction):
+        if self.neighbors[direction]:
+            return True
+
+
+class BlockCursor:
+    """Model of a cursor for selecting the next block to rotate."""
+    STATE_INACTIVE = 0
+    STATE_ACTIVE = 1
+
+    def __init__(self, event_manager):
+        self.manager = event_manager
+        self.manager.register_listener(self)
+        self.block = None
+        self.state = BlockCursor.STATE_INACTIVE
+
+    def move(self, player, direction):
+        if self.state == BlockCursor.STATE_INACTIVE:
+            return
+        if self.block.move_possible(direction):
+            destination = self.block.neighbors[direction]
+            self.block = destination
+            self.manager.post(MoveBlockCursorEvent(self, player, direction))
+
+    def place(self, block):
+        self.block = block
+        self.state = BlockCursor.STATE_ACTIVE
+        self.manager.post(PlaceBlockCursorEvent(self))
+
+    def notify(self, event):
+        if isinstance(event, GameRotateUIEvent):
+            board = event.game.board
+            self.place(board.blocks[board.start_block_index])
+        elif isinstance(event, MoveBlockCursorRequestEvent):
+            self.move(event.player, event.direction)
 
 
 def main():

@@ -340,22 +340,22 @@ class DirectionCursorSprite(pygame.sprite.Sprite):
         self.image.fill(COLOR_TRANSPARENT)
         x_offset = 100 * math.sin(degrees_to_radians(20))
         y_offset = 100 * math.cos(degrees_to_radians(20))
-        if self.direction == DIRECTION_LEFT:
+        if self.direction == DIRECTION_LEFT or self.direction is None:
             pygame.draw.arc(self.image, self.color, (50, 50, 200, 200), degrees_to_radians(110),
                             degrees_to_radians(250), 3)
-            start_pos = (150 - x_offset, 150 + y_offset)
-            left_end_pos = (start_pos[0] - 20, start_pos[1] + 5)
-            top_end_pos = (start_pos[0] - 5, start_pos[1] - 20)
-            pygame.draw.line(self.image, self.color, start_pos, left_end_pos, 3)
-            pygame.draw.line(self.image, self.color, start_pos, top_end_pos, 3)
-        elif self.direction == DIRECTION_RIGHT:
+            arrow_start_pos = (150 - x_offset, 150 + y_offset)
+            arrow_left_end_pos = (arrow_start_pos[0] - 20, arrow_start_pos[1] + 5)
+            arrow_top_end_pos = (arrow_start_pos[0] - 5, arrow_start_pos[1] - 20)
+            pygame.draw.line(self.image, self.color, arrow_start_pos, arrow_left_end_pos, 3)
+            pygame.draw.line(self.image, self.color, arrow_start_pos, arrow_top_end_pos, 3)
+        if self.direction == DIRECTION_RIGHT or self.direction is None:
             pygame.draw.arc(self.image, self.color, (50, 50, 200, 200), degrees_to_radians(290),
                             degrees_to_radians(70), 3)
-            start_pos = (150 + x_offset, 150 + y_offset)
-            left_end_pos = (start_pos[0] + 20, start_pos[1] + 5)
-            top_end_pos = (start_pos[0] + 5, start_pos[1] - 20)
-            pygame.draw.line(self.image, self.color, start_pos, left_end_pos, 3)
-            pygame.draw.line(self.image, self.color, start_pos, top_end_pos, 3)
+            arrow_start_pos = (150 + x_offset, 150 + y_offset)
+            arrow_right_end_pos = (arrow_start_pos[0] + 20, arrow_start_pos[1] + 5)
+            arrow_top_end_pos = (arrow_start_pos[0] + 5, arrow_start_pos[1] - 20)
+            pygame.draw.line(self.image, self.color, arrow_start_pos, arrow_right_end_pos, 3)
+            pygame.draw.line(self.image, self.color, arrow_start_pos, arrow_top_end_pos, 3)
 
 
 def degrees_to_radians(deg):
@@ -472,6 +472,7 @@ class PygameView:
         self.direction_cursor_sprite.color = direction_cursor.player.color
         block_cursor_sprite = self.block_cursor_sprite
         self.direction_cursor_sprite.rect.center = block_cursor_sprite.rect.center
+        self.direction_cursor_sprite.direction = direction_cursor.direction
         self.front_sprites.add(self.direction_cursor_sprite)
 
     def move_direction_cursor(self, direction_cursor):
@@ -807,6 +808,7 @@ class DirectionCursor:
             return
         self.player = player
         self.state = DirectionCursor.STATE_ACTIVE
+        self.direction = None
         self.manager.post(DirectionCursorPlaceEvent(self))
 
     def hide(self):
@@ -824,6 +826,8 @@ class DirectionCursor:
 
     def select(self):
         if self.state == DirectionCursor.STATE_INACTIVE:
+            return
+        if self.direction not in (DIRECTION_LEFT, DIRECTION_RIGHT):
             return
         self.state = DirectionCursor.STATE_INACTIVE
         self.manager.post(DirectionCursorSelectEvent(self))

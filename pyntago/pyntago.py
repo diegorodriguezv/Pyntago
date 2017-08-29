@@ -2,6 +2,7 @@
 """Pyntago: A pentago board in python."""
 import math
 import os
+from collections import namedtuple
 
 import pygame
 from pygame.locals import *
@@ -38,9 +39,9 @@ class CycleEvent(Event):
 
 # Board events
 class BoardBuiltEvent(Event):
-    def __init__(self, board):
+    def __init__(self, game):
         self.name = "Board built event"
-        self.board = board
+        self.game = game
 
 
 # Input events
@@ -308,7 +309,7 @@ class PositionCursorSprite(pygame.sprite.Sprite):
 
     def update(self):
         if self.move_to:
-            self.rect.center = self.move_to
+            self.rect.topleft = self.move_to
             self.move_to = None
         if self.last_color != self.color:
             pygame.draw.rect(self.image, self.color, (10, 10, 80, 80), 3)
@@ -363,12 +364,12 @@ def degrees_to_radians(deg):
 
 
 class BlockSprite(pygame.sprite.Sprite):
-    def __init__(self, block_id, group=None):
+    def __init__(self, block, group=None):
         if group is not None:
             pygame.sprite.Sprite.__init__(self, group)
         else:
             pygame.sprite.Sprite.__init__(self)
-        self.block_id = block_id
+        self.block = block
         self.image = pygame.Surface((300, 300))
         self.image.fill(COLOR_BLOCK)
         # draw the 9 holes in the block
@@ -438,20 +439,20 @@ class PygameView:
         self.direction_cursor_sprite = DirectionCursorSprite()
         self.position_cursor_sprite = PositionCursorSprite()
 
-    def show_board(self, board):
+    def show_board(self, game):
         self.background.fill(COLOR_WHITE)
         self.window.blit(self.background, (0, 0))
         pygame.display.flip()
         block_position = pygame.Rect((-300 + 124, 124, 300, 300))
         column = 0
-        for block in board.blocks:
+        for block in game.blocks:
             if column < 2:
                 block_position = block_position.move(301, 0)
             else:
                 column = 0
                 block_position = block_position.move(-301, 301)
             column += 1
-            new_sprite = BlockSprite(id(block), self.back_sprites)
+            new_sprite = BlockSprite(block, self.back_sprites)
             new_sprite.rect = block_position
 
     def show_block_cursor(self, block_cursor):
@@ -476,10 +477,32 @@ class PygameView:
         self.front_sprites.add(self.direction_cursor_sprite)
 
     def move_direction_cursor(self, direction_cursor):
+        self.direction_cursor_sprite.color = direction_cursor.player.color
         self.direction_cursor_sprite.direction = direction_cursor.direction
 
     def hide_direction_cursor(self):
         self.direction_cursor_sprite.kill()
+
+    def update_position_cursor_sprite(self, position_cursor):
+        block = get_block(position_cursor.position)
+        block_position = get_pos_in_block(position_cursor.position, block)
+        block_sprite = self.get_block_sprite(block)
+        (x, y) = block_sprite.rect.topleft
+        self.position_cursor_sprite.move_to = (x + 100 * block_position.x,
+                                               y + 100 * block_position.y)
+
+    def show_position_cursor(self, position_cursor):
+        self.position_cursor_sprite.color = position_cursor.player.color
+        self.update_position_cursor_sprite(position_cursor)
+        self.front_sprites.add(self.position_cursor_sprite)
+
+    def move_position_cursor(self, position_cursor):
+        self.update_position_cursor_sprite(position_cursor)
+
+    # todo: rename position_cursor to board_position_cursor
+    # todo: rename position to BoardPosition
+    def hide_position_cursor(self):
+        self.position_cursor_sprite.kill()
 
     def show_message(self, game):
         self.message_sprite.text = game.message
@@ -487,7 +510,7 @@ class PygameView:
 
     def get_block_sprite(self, block):
         for sprite in self.back_sprites:
-            if hasattr(sprite, "block_id") and sprite.block_id == id(block):
+            if hasattr(sprite, "block") and sprite.block == block:
                 return sprite
 
     def notify(self, event):
@@ -500,7 +523,7 @@ class PygameView:
             dirt_rects_front = self.front_sprites.draw(self.window)
             pygame.display.update(dirt_rects_front + dirty_rects_back)
         elif isinstance(event, BoardBuiltEvent):
-            self.show_board(event.board)
+            self.show_board(event.game)
         elif isinstance(event, BlockCursorPlaceEvent):
             self.show_block_cursor(event.block_cursor)
         elif isinstance(event, BlockCursorMoveEvent):
@@ -513,8 +536,18 @@ class PygameView:
             self.move_direction_cursor(event.direction_cursor)
         elif isinstance(event, DirectionCursorHideEvent):
             self.hide_direction_cursor()
+        elif isinstance(event, PositionCursorPlaceEvent):
+            self.show_position_cursor(event.position_cursor)
+        elif isinstance(event, PositionCursorMoveEvent):
+            self.move_position_cursor(event.position_cursor)
+        elif isinstance(event, PositionCursorHideEvent):
+            self.hide_position_cursor()
         elif isinstance(event, MessageUpdateEvent):
             self.show_message(event.game)
+
+
+Player = namedtuple('Player', 'name color')
+Position = namedtuple('Position', 'x y')
 
 
 class Game:
@@ -528,18 +561,19 @@ class Game:
         self.manager = event_manager
         self.manager.register_listener(self)
         self.state = Game.STATE_PREPARING
-        self.players = [Player(event_manager, "White", COLOR_WHITE),
-                        Player(event_manager, "Black", COLOR_BLACK)]
+        self.players = [Player("White", COLOR_WHITE),
+                        Player("Black", COLOR_BLACK)]
         self.current_player = self.players[0]
-        self.board = Board(event_manager)
-        self.block_cursor = BlockCursor(event_manager)
-        self.position_cursor = PositionCursor(event_manager)
+        self.block_cursor = BlockCursor(event_manager, start_block=0)
+        self.position_cursor = PositionCursor(event_manager, start_position=Position(x=2, y=2))
         self.direction_cursor = DirectionCursor(event_manager)
         self.message = None
         self.move_count = 0
+        self.marble_positions = {}
+        self.blocks = range(4)
 
     def start(self):
-        self.board.build()
+        self.manager.post(BoardBuiltEvent(self))
         self.state = Game.STATE_MOVE
         self.manager.post(GameMoveUIEvent(self))
         self.update_message()
@@ -556,11 +590,11 @@ class Game:
 
     def rotation_finished(self):
         self.state = Game.STATE_MOVE
-        self.manager.post(GameMoveUIEvent(self))
         # todo: check for winner
         # change current player
         self.current_player = [p for p in self.players if p != self.current_player][0]
         self.move_count += 1
+        self.manager.post(GameMoveUIEvent(self))
         self.update_message()
 
     def update_message(self):
@@ -597,68 +631,88 @@ class Game:
                 self.manager.post(RequestDirectionCursorSelectEvent())
 
 
-class Player:
-    """Model of a player."""
-
-    def __init__(self, event_manager, name, player_color):
-        self.manager = event_manager
-        self.game = None
-        self.name = name
-        self.color = player_color
-        # self.manager.register_listener(self)
-
-    def __str__(self):
-        return '<Player %s %s>'.format(self.name, id(self))
-
-    def notify(self, event):
-        pass
-
-
-class Board:
-    """Model of the board."""
-    STATE_PREPARING = 'preparing'
-    STATE_BUILT = 'built'
-
-    def __init__(self, event_manager):
-        self.manager = event_manager
-        self.state = Board.STATE_PREPARING
-        self.blocks = []
-        self.positions = []
-        self.start_block_index = 0
-        self.start_position_index = 14
-
-    def build(self):
-        for i in range(4):
-            self.blocks.append(Block(self.manager))
-        self.blocks[2].neighbors[DIRECTION_UP] = self.blocks[0]
-        self.blocks[3].neighbors[DIRECTION_UP] = self.blocks[1]
-        self.blocks[0].neighbors[DIRECTION_RIGHT] = self.blocks[1]
-        self.blocks[2].neighbors[DIRECTION_RIGHT] = self.blocks[3]
-        self.blocks[1].neighbors[DIRECTION_LEFT] = self.blocks[0]
-        self.blocks[3].neighbors[DIRECTION_LEFT] = self.blocks[2]
-        self.blocks[0].neighbors[DIRECTION_DOWN] = self.blocks[2]
-        self.blocks[1].neighbors[DIRECTION_DOWN] = self.blocks[3]
-        for i in range(6):
-            for j in range(6):
-                self.positions.append(Position(i, j, self.manager))
-        self.state = Board.STATE_BUILT
-        self.manager.post(BoardBuiltEvent(self))
+#
+# class Board:
+#     """Model of the board."""
+#     STATE_PREPARING = 'preparing'
+#     STATE_BUILT = 'built'
+#
+#     def __init__(self, event_manager):
+#         self.manager = event_manager
+#         self.state = Board.STATE_PREPARING
+#         self.positions = []
+#         self.start_block_index = 0
+#         self.start_position_index = 14
+#
+#     def build(self):
+#         for i in range(6):
+#             for j in range(6):
+#                 pos = Position(i, j, self.manager)
+#                 pos.block = self.blocks[pos.get_block()]
+#                 self.positions.append(pos)
+#         self.state = Board.STATE_BUILT
 
 
-class Block:
-    """Model of a block."""
+def position_neighbor(position, direction):
+    if direction == DIRECTION_UP:
+        if position.y > 0:
+            return Position(position.x, position.y - 1)
+    elif direction == DIRECTION_DOWN:
+        if position.y < 5:
+            return Position(position.x, position.y + 1)
+    elif direction == DIRECTION_LEFT:
+        if position.x > 0:
+            return Position(position.x - 1, position.y)
+    elif direction == DIRECTION_RIGHT:
+        if position.x < 5:
+            return Position(position.x + 1, position.y)
+    return None
 
-    def __init__(self, event_manager):
-        self.manager = event_manager
-        self.neighbors = list(range(4))
-        self.neighbors[DIRECTION_UP] = None
-        self.neighbors[DIRECTION_DOWN] = None
-        self.neighbors[DIRECTION_LEFT] = None
-        self.neighbors[DIRECTION_RIGHT] = None
 
-    def move_possible(self, direction):
-        if self.neighbors[direction]:
-            return True
+def get_block(position):
+    if position.x < 3 and position.y < 3:
+        return 0
+    elif position.x >= 3 and position.y < 3:
+        return 1
+    elif position.x < 3 and position.y >= 3:
+        return 2
+    elif position.x >= 3 and position.y >= 3:
+        return 3
+
+
+def get_pos_in_block(position, block):
+    if block == 0:
+        return Position(position.x, position.y)
+    elif block == 1:
+        return Position(position.x - 3, position.y)
+    elif block == 2:
+        return Position(position.x, position.y - 3)
+    elif block == 3:
+        return Position(position.x - 3, position.y - 3)
+
+
+def get_block_neighbor(block, direction):
+    if direction == DIRECTION_UP:
+        if block == 2:
+            return 0
+        if block == 3:
+            return 1
+    elif direction == DIRECTION_RIGHT:
+        if block == 0:
+            return 1
+        elif block == 2:
+            return 3
+    elif direction == DIRECTION_LEFT:
+        if block == 1:
+            return 0
+        elif block == 3:
+            return 2
+    elif direction == DIRECTION_DOWN:
+        if block == 0:
+            return 2
+        elif block == 1:
+            return 3
+    return None
 
 
 class BlockCursor:
@@ -666,17 +720,18 @@ class BlockCursor:
     STATE_INACTIVE = 0
     STATE_ACTIVE = 1
 
-    def __init__(self, event_manager):
+    def __init__(self, event_manager, start_block):
         self.manager = event_manager
         self.manager.register_listener(self)
+        self.start_block = start_block
         self.block = None
         self.player = None
         self.state = BlockCursor.STATE_INACTIVE
 
-    def place(self, block, player):
+    def place(self, player):
         if self.state == BlockCursor.STATE_ACTIVE:
             return
-        self.block = block
+        self.block = self.start_block
         self.player = player
         self.state = BlockCursor.STATE_ACTIVE
         self.manager.post(BlockCursorPlaceEvent(self))
@@ -690,9 +745,9 @@ class BlockCursor:
     def move(self, direction):
         if self.state == BlockCursor.STATE_INACTIVE:
             return
-        if self.block.move_possible(direction):
-            destination = self.block.neighbors[direction]
-            self.block = destination
+        neighbor = get_block_neighbor(self.block, direction)
+        if neighbor is not None:
+            self.block = neighbor
             self.manager.post(BlockCursorMoveEvent(self))
 
     def select(self):
@@ -704,8 +759,7 @@ class BlockCursor:
     def notify(self, event):
         # Game UI events
         if isinstance(event, GameBlockSelectionUIEvent):
-            board = event.game.board
-            self.place(board.blocks[board.start_block_index], event.game.current_player)
+            self.place(event.game.current_player)
         elif isinstance(event, GameBlockRotationUIEvent):
             self.hide()
         # Action request
@@ -715,45 +769,25 @@ class BlockCursor:
             self.select()
 
 
-class Position:
-    """Model of a position."""
-
-    def __init__(self, x, y, event_manager):
-        self.manager = event_manager
-        self.x = x
-        self.y = y
-        self.neighbors = list(range(4))
-        self.neighbors[DIRECTION_UP] = None
-        self.neighbors[DIRECTION_DOWN] = None
-        self.neighbors[DIRECTION_LEFT] = None
-        self.neighbors[DIRECTION_RIGHT] = None
-
-    def move_possible(self, direction):
-        can_move = list(range(4))
-        can_move[DIRECTION_UP] = True if self.x > 0 else False
-        can_move[DIRECTION_DOWN] = True if self.x < 5 else False
-        can_move[DIRECTION_LEFT] = True if self.y > 0 else False
-        can_move[DIRECTION_RIGHT] = True if self.y < 5 else False
-        return can_move[direction]
-
-
+# todo: bug: position cursor doesn't change color
 class PositionCursor:
     """Model of a cursor for selecting the position where a marble is going to be placed."""
     STATE_INACTIVE = 0
     STATE_ACTIVE = 1
 
-    def __init__(self, event_manager):
+    def __init__(self, event_manager, start_position):
         self.manager = event_manager
         self.manager.register_listener(self)
+        self.start_position = start_position
         self.position = None
         self.player = None
         self.state = PositionCursor.STATE_INACTIVE
 
-    def place(self, position, player):
+    def place(self, player):
         if self.state == PositionCursor.STATE_ACTIVE:
             return
-        self.position = position
         self.player = player
+        self.position = self.start_position
         self.state = PositionCursor.STATE_ACTIVE
         self.manager.post(PositionCursorPlaceEvent(self))
 
@@ -766,9 +800,9 @@ class PositionCursor:
     def move(self, direction):
         if self.state == PositionCursor.STATE_INACTIVE:
             return
-        if self.position.move_possible(direction):
-            # destination = self.position.neighbors[direction]
-            # self.position = destination
+        new_pos = position_neighbor(self.position, direction)
+        if new_pos is not None:
+            self.position = new_pos
             self.manager.post(PositionCursorMoveEvent(self))
 
     def select(self):
@@ -780,8 +814,7 @@ class PositionCursor:
     def notify(self, event):
         # Game UI events
         if isinstance(event, GameMoveUIEvent):
-            board = event.game.board
-            self.place(board.positions[board.start_position_index], event.game.current_player)
+            self.place(event.game.current_player)
         elif isinstance(event, GameBlockSelectionUIEvent):
             self.hide()
         # Action request
@@ -791,6 +824,7 @@ class PositionCursor:
             self.select()
 
 
+# todo: rename direction to rotation direction
 class DirectionCursor:
     """Model of a cursor for selecting the direction for rotating a block."""
     STATE_INACTIVE = 0

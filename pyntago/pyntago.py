@@ -484,8 +484,8 @@ class PygameView:
         self.direction_cursor_sprite.kill()
 
     def update_position_cursor_sprite(self, position_cursor):
-        block = get_block(position_cursor.position)
-        block_position = get_pos_in_block(position_cursor.position, block)
+        block = block_for_position(position_cursor.position)
+        block_position = position_in_block(position_cursor.position, block)
         block_sprite = self.get_block_sprite(block)
         (x, y) = block_sprite.rect.topleft
         self.position_cursor_sprite.move_to = (x + 100 * block_position.x,
@@ -499,8 +499,6 @@ class PygameView:
     def move_position_cursor(self, position_cursor):
         self.update_position_cursor_sprite(position_cursor)
 
-    # todo: rename position_cursor to board_position_cursor
-    # todo: rename position to BoardPosition
     def hide_position_cursor(self):
         self.position_cursor_sprite.kill()
 
@@ -631,28 +629,6 @@ class Game:
                 self.manager.post(RequestDirectionCursorSelectEvent())
 
 
-#
-# class Board:
-#     """Model of the board."""
-#     STATE_PREPARING = 'preparing'
-#     STATE_BUILT = 'built'
-#
-#     def __init__(self, event_manager):
-#         self.manager = event_manager
-#         self.state = Board.STATE_PREPARING
-#         self.positions = []
-#         self.start_block_index = 0
-#         self.start_position_index = 14
-#
-#     def build(self):
-#         for i in range(6):
-#             for j in range(6):
-#                 pos = Position(i, j, self.manager)
-#                 pos.block = self.blocks[pos.get_block()]
-#                 self.positions.append(pos)
-#         self.state = Board.STATE_BUILT
-
-
 def position_neighbor(position, direction):
     if direction == DIRECTION_UP:
         if position.y > 0:
@@ -669,7 +645,7 @@ def position_neighbor(position, direction):
     return None
 
 
-def get_block(position):
+def block_for_position(position):
     if position.x < 3 and position.y < 3:
         return 0
     elif position.x >= 3 and position.y < 3:
@@ -680,7 +656,7 @@ def get_block(position):
         return 3
 
 
-def get_pos_in_block(position, block):
+def position_in_block(position, block):
     if block == 0:
         return Position(position.x, position.y)
     elif block == 1:
@@ -691,7 +667,7 @@ def get_pos_in_block(position, block):
         return Position(position.x - 3, position.y - 3)
 
 
-def get_block_neighbor(block, direction):
+def block_neighbor(block, direction):
     if direction == DIRECTION_UP:
         if block == 2:
             return 0
@@ -745,7 +721,7 @@ class BlockCursor:
     def move(self, direction):
         if self.state == BlockCursor.STATE_INACTIVE:
             return
-        neighbor = get_block_neighbor(self.block, direction)
+        neighbor = block_neighbor(self.block, direction)
         if neighbor is not None:
             self.block = neighbor
             self.manager.post(BlockCursorMoveEvent(self))
@@ -769,7 +745,6 @@ class BlockCursor:
             self.select()
 
 
-# todo: bug: position cursor doesn't change color
 class PositionCursor:
     """Model of a cursor for selecting the position where a marble is going to be placed."""
     STATE_INACTIVE = 0
@@ -824,7 +799,6 @@ class PositionCursor:
             self.select()
 
 
-# todo: rename direction to rotation direction
 class DirectionCursor:
     """Model of a cursor for selecting the direction for rotating a block."""
     STATE_INACTIVE = 0

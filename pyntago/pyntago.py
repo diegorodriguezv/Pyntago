@@ -191,7 +191,13 @@ class GameBlockRotationUIEvent(Event):
         self.game = game
 
 
-class MessageUpdateEvent(Event):
+class GameFinishedUIEvent(Event):
+    def __init__(self, game):
+        self.name = "Start game finished UI event"
+        self.game = game
+
+
+class GameMessageUpdateEvent(Event):
     def __init__(self, game):
         self.name = "Message update event"
         self.game = game
@@ -370,6 +376,21 @@ class BlockSprite(pygame.sprite.Sprite):
         else:
             pygame.sprite.Sprite.__init__(self)
         self.block = block
+        self.image = None
+        self.board = None
+        self.board_changed = True
+
+    def update_board(self, board):
+        self.board = board
+        self.board_changed = True
+
+    def update(self):
+        if self.board_changed:
+            self.draw_block()
+            self.draw_marbles()
+            self.board_changed = False
+
+    def draw_block(self):
         self.image = pygame.Surface((300, 300))
         self.image.fill(COLOR_BLOCK)
         # draw the 9 holes in the block
@@ -381,16 +402,18 @@ class BlockSprite(pygame.sprite.Sprite):
             for j in range(3):
                 self.image.blit(hole, (i * 100, j * 100))
 
-
-class MarbleSprite(pygame.sprite.Sprite):
-    def __init__(self, marble, group=None):
-        if group is not None:
-            pygame.sprite.Sprite.__init__(self, group)
-        else:
-            pygame.sprite.Sprite.__init__(self)
-        self.marble = marble
-        self.image = pygame.Surface((100, 100))
-        self.image.fill(marble.color)
+    def draw_marbles(self):
+        marble = pygame.Surface((100, 100))
+        marble.convert_alpha()
+        if self.board is None:
+            return
+        this_block_positions = {position_in_block(pos, self.block): player
+                                for pos, player in self.board.items()
+                                if block_for_position(pos) == self.block}
+        for (x, y), player in this_block_positions.items():
+            marble.fill(COLOR_BLOCK)
+            pygame.draw.circle(marble, player.color, (50, 50), 25)
+            self.image.blit(marble, (x * 100, y * 100))
 
 
 class MessageSprite(pygame.sprite.Sprite):
@@ -454,6 +477,11 @@ class PygameView:
             column += 1
             new_sprite = BlockSprite(block, self.back_sprites)
             new_sprite.rect = block_position
+
+    def update_board(self, board):
+        for block in range(4):
+            block_sprite = self.get_block_sprite(block)
+            block_sprite.update_board(board)
 
     def show_block_cursor(self, block_cursor):
         self.block_cursor_sprite.color = block_cursor.player.color
@@ -540,20 +568,35 @@ class PygameView:
             self.move_position_cursor(event.position_cursor)
         elif isinstance(event, PositionCursorHideEvent):
             self.hide_position_cursor()
-        elif isinstance(event, MessageUpdateEvent):
+        elif isinstance(event, GameMessageUpdateEvent):
             self.show_message(event.game)
+        elif isinstance(event, GameMoveUIEvent) or isinstance(event, GameBlockRotationUIEvent) \
+                or isinstance(event, GameBlockSelectionUIEvent) :
+            self.update_board(event.game.board)
+        elif isinstance(event, GameFinishedUIEvent):
+            self.hide_position_cursor()
+            self.hide_block_cursor()
+            self.hide_direction_cursor()
+            self.update_board(event.game.board)
 
-
+# todo: fix: col check and rowcheck not working
 Player = namedtuple('Player', 'name color')
 Position = namedtuple('Position', 'x y')
 
 
 class Game:
-    """Model of the game."""
+    """Model of the game.
+    Blocks:
+      0 1
+      2 3
+    Positions:
+      (i,j): 0 <= i < 6 and 0 <= j < 6
+      The top left corner is (0,0) and the bottom right is (5,5)"""
     STATE_PREPARING = 'preparing'
     STATE_MOVE = 'awaiting move'
     STATE_SELECT = 'awaiting selection'
     STATE_ROTATE = 'awaiting rotation'
+    STATE_FINISHED = 'game finished'
 
     def __init__(self, event_manager):
         self.manager = event_manager
@@ -567,7 +610,7 @@ class Game:
         self.direction_cursor = DirectionCursor(event_manager)
         self.message = None
         self.move_count = 0
-        self.marble_positions = {}
+        self.board = {}
         self.blocks = range(4)
 
     def start(self):
@@ -576,10 +619,36 @@ class Game:
         self.manager.post(GameMoveUIEvent(self))
         self.update_message()
 
+    def somebody_wins(self):
+        self.state = Game.STATE_FINISHED
+        self.update_message("{0} wins!".format(self.current_player.name))
+
+    def tie(self):
+        self.state = Game.STATE_FINISHED
+        self.update_message("{0} - {1} tie!".format(self.players[0].name, self.players[1].name))
+
+    def check_winner(self):
+        wins = winner(self.board, self.players)
+        if wins is not None:
+            if wins.name is None:
+                self.tie()
+            else:
+                self.somebody_wins()
+            return True
+        return False
+
     def move_finished(self):
+        if self.position_cursor.position in self.board:
+            self.update_message('Invalid move')
+            self.manager.post(GameMoveUIEvent(self))
+            return
         self.state = Game.STATE_SELECT
+        self.board[self.position_cursor.position] = self.current_player
         self.manager.post(GameBlockSelectionUIEvent(self))
-        self.update_message()
+        if not self.check_winner():
+            self.update_message()
+        else:
+            self.manager.post(GameFinishedUIEvent(self))
 
     def selection_finished(self):
         self.state = Game.STATE_ROTATE
@@ -588,16 +657,23 @@ class Game:
 
     def rotation_finished(self):
         self.state = Game.STATE_MOVE
-        # todo: check for winner
-        # change current player
-        self.current_player = [p for p in self.players if p != self.current_player][0]
-        self.move_count += 1
-        self.manager.post(GameMoveUIEvent(self))
-        self.update_message()
+        new_board = rotate(self.board, self.block_cursor.block, self.direction_cursor.direction)
+        self.board = new_board
+        if not self.check_winner():
+            self.current_player = [p for p in self.players if p != self.current_player][0]
+            self.move_count += 1
+            self.manager.post(GameMoveUIEvent(self))
+            self.update_message()
+        else:
+            self.manager.post(GameFinishedUIEvent(self))
 
-    def update_message(self):
-        self.message = "{0}'s turn, {1}".format(self.current_player.name, self.state)
-        self.manager.post(MessageUpdateEvent(self))
+    def update_message(self, message=None):
+        # todo: message is "loosers's turn, game finished" instead of "winner wins!"
+        if message is None:
+            self.message = "{0}'s turn, {1}".format(self.current_player.name, self.state)
+        else:
+            self.message = message
+        self.manager.post(GameMessageUpdateEvent(self))
 
     def notify(self, event):
         if isinstance(event, CycleEvent):
@@ -627,6 +703,125 @@ class Game:
                 self.manager.post(RequestBlockCursorSelectEvent())
             elif self.state == Game.STATE_ROTATE:
                 self.manager.post(RequestDirectionCursorSelectEvent())
+
+
+def winner(board, players):
+    if len(board) == 36:
+        return Player(None, COLOR_GREEN)
+    for player in players:
+        if check_cols(board, player) or check_rows(board, player) or check_diagonals(board, player):
+            return player
+    return None
+
+
+def rotate(board, block, direction=DIRECTION_LEFT):
+    # calculate the position for the center of the block to rotate
+    if block == 0:
+        row = 1
+        col = 1
+    elif block == 1:
+        row = 4
+        col = 1
+    elif block == 2:
+        row = 1
+        col = 4
+    elif block == 3:
+        row = 4
+        col = 4
+    new_board = {}
+    # list of pairs of positions with rotation pairs (source, destination) around the center block
+    left_rotation = [((row, col - 1), (row - 1, col)),  # N = W
+                     ((row - 1, col), (row, col + 1)),  # W = S
+                     ((row, col + 1), (row + 1, col)),  # S = E
+                     ((row + 1, col), (row, col - 1)),  # E = N
+                     ((row - 1, col - 1), (row - 1, col + 1)),  # NW = SW
+                     ((row - 1, col + 1), (row + 1, col + 1)),  # SW = SE
+                     ((row + 1, col + 1), (row + 1, col - 1)),  # SE = NE
+                     ((row + 1, col - 1), (row - 1, col - 1)),  # NE = NW
+                     ((row, col), (row, col)),  # C = C
+                     ]
+    right_rotation = [((row, col - 1), (row + 1, col)),  # N = E
+                      ((row + 1, col), (row, col + 1)),  # E = S
+                      ((row, col + 1), (row - 1, col)),  # S = W
+                      ((row - 1, col), (row, col - 1)),  # W = N
+                      ((row - 1, col + 1), (row - 1, col - 1)),  # SW = NW
+                      ((row - 1, col - 1), (row + 1, col - 1)),  # NW = NE
+                      ((row + 1, col - 1), (row + 1, col + 1)),  # NE = SE
+                      ((row + 1, col + 1), (row - 1, col + 1)),  # SE = SW
+                      ((row, col), (row, col)),  # C = C
+                      ]
+    if direction == DIRECTION_LEFT:
+        rotation = left_rotation
+    elif direction == DIRECTION_RIGHT:
+        rotation = right_rotation
+    # first add only the rotated positions
+    for pos, player in board.items():
+        for source, destination in rotation:
+            if pos == source:
+                new_board[Position(*destination)] = player
+    # now add the non rotated positions
+    for pos, player in board.items():
+        if not any(pos in r for r in rotation):
+            new_board[pos] = player
+    return new_board
+
+
+def check_rows(board, player):
+    for row in range(6):
+        count, maxcount = 0, 0
+        for col in range(6):
+            if ((row, col), player) in board.items():
+                count += 1
+                maxcount = count
+            else:
+                count = 0
+        if maxcount >= 5:
+            return True
+    return False
+
+
+def check_cols(board, player):
+    for col in range(6):
+        count, maxcount = 0, 0
+        for row in range(6):
+            if ((row, col), player) in board.items():
+                count += 1
+                maxcount = count
+            else:
+                count = 0
+    if maxcount >= 5:
+        return True
+    return False
+
+
+def check_diagonals(board, player):
+    # check descending diagonals
+    # there are 3 diagonals that can hold a line of 5
+    for col_offset in range(-1, 2):
+        count, maxcount = 0, 0
+        for row in range(6):
+            interval = col_offset + row
+            if 0 <= interval < 6 and ((row, interval), player) in board.items():
+                count += 1
+                maxcount = count
+            else:
+                count = 0
+        if maxcount >= 5:
+            return True
+    # check ascending diagonals
+    # there are 3 diagonals that can hold a line of 5
+    for col_offset in range(-1, 2):
+        count, maxcount = 0, 0
+        for row in range(6):
+            interval = col_offset - row + 5
+            if 0 <= interval < 6 and ((row, interval), player) in board.items():
+                count += 1
+                maxcount = count
+            else:
+                count = 0
+        if maxcount >= 5:
+            return True
+    return False
 
 
 def position_neighbor(position, direction):
@@ -665,6 +860,18 @@ def position_in_block(position, block):
         return Position(position.x, position.y - 3)
     elif block == 3:
         return Position(position.x - 3, position.y - 3)
+
+
+# todo: remove?
+# def position_in_board(position, block):
+#     if block == 0:
+#         return Position(position.x, position.y)
+#     elif block == 1:
+#         return Position(position.x + 3, position.y)
+#     elif block == 2:
+#         return Position(position.x, position.y + 3)
+#     elif block == 3:
+#         return Position(position.x + 3, position.y + 3)
 
 
 def block_neighbor(block, direction):

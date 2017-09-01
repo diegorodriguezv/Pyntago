@@ -571,7 +571,7 @@ class PygameView:
         elif isinstance(event, GameMessageUpdateEvent):
             self.show_message(event.game)
         elif isinstance(event, GameMoveUIEvent) or isinstance(event, GameBlockRotationUIEvent) \
-                or isinstance(event, GameBlockSelectionUIEvent) :
+                or isinstance(event, GameBlockSelectionUIEvent):
             self.update_board(event.game.board)
         elif isinstance(event, GameFinishedUIEvent):
             self.hide_position_cursor()
@@ -579,7 +579,7 @@ class PygameView:
             self.hide_direction_cursor()
             self.update_board(event.game.board)
 
-# todo: fix: col check and rowcheck not working
+
 Player = namedtuple('Player', 'name color')
 Position = namedtuple('Position', 'x y')
 
@@ -619,21 +619,15 @@ class Game:
         self.manager.post(GameMoveUIEvent(self))
         self.update_message()
 
-    def somebody_wins(self):
-        self.state = Game.STATE_FINISHED
-        self.update_message("{0} wins!".format(self.current_player.name))
-
-    def tie(self):
-        self.state = Game.STATE_FINISHED
-        self.update_message("{0} - {1} tie!".format(self.players[0].name, self.players[1].name))
-
     def check_winner(self):
         wins = winner(self.board, self.players)
         if wins is not None:
             if wins.name is None:
-                self.tie()
+                self.state = Game.STATE_FINISHED
+                self.update_message("{0} - {1} tie!".format(self.players[0].name, self.players[1].name))
             else:
-                self.somebody_wins()
+                self.state = Game.STATE_FINISHED
+                self.update_message("{0} wins!".format(wins.name))
             return True
         return False
 
@@ -668,7 +662,6 @@ class Game:
             self.manager.post(GameFinishedUIEvent(self))
 
     def update_message(self, message=None):
-        # todo: message is "loosers's turn, game finished" instead of "winner wins!"
         if message is None:
             self.message = "{0}'s turn, {1}".format(self.current_player.name, self.state)
         else:
@@ -705,50 +698,41 @@ class Game:
                 self.manager.post(RequestDirectionCursorSelectEvent())
 
 
-def winner(board, players):
-    if len(board) == 36:
-        return Player(None, COLOR_GREEN)
-    for player in players:
-        if check_cols(board, player) or check_rows(board, player) or check_diagonals(board, player):
-            return player
-    return None
-
-
 def rotate(board, block, direction=DIRECTION_LEFT):
     # calculate the position for the center of the block to rotate
     if block == 0:
-        row = 1
-        col = 1
+        x = 1
+        y = 1
     elif block == 1:
-        row = 4
-        col = 1
+        x = 4
+        y = 1
     elif block == 2:
-        row = 1
-        col = 4
+        x = 1
+        y = 4
     elif block == 3:
-        row = 4
-        col = 4
+        x = 4
+        y = 4
     new_board = {}
     # list of pairs of positions with rotation pairs (source, destination) around the center block
-    left_rotation = [((row, col - 1), (row - 1, col)),  # N = W
-                     ((row - 1, col), (row, col + 1)),  # W = S
-                     ((row, col + 1), (row + 1, col)),  # S = E
-                     ((row + 1, col), (row, col - 1)),  # E = N
-                     ((row - 1, col - 1), (row - 1, col + 1)),  # NW = SW
-                     ((row - 1, col + 1), (row + 1, col + 1)),  # SW = SE
-                     ((row + 1, col + 1), (row + 1, col - 1)),  # SE = NE
-                     ((row + 1, col - 1), (row - 1, col - 1)),  # NE = NW
-                     ((row, col), (row, col)),  # C = C
+    left_rotation = [((x, y - 1), (x - 1, y)),  # N = W
+                     ((x - 1, y), (x, y + 1)),  # W = S
+                     ((x, y + 1), (x + 1, y)),  # S = E
+                     ((x + 1, y), (x, y - 1)),  # E = N
+                     ((x - 1, y - 1), (x - 1, y + 1)),  # NW = SW
+                     ((x - 1, y + 1), (x + 1, y + 1)),  # SW = SE
+                     ((x + 1, y + 1), (x + 1, y - 1)),  # SE = NE
+                     ((x + 1, y - 1), (x - 1, y - 1)),  # NE = NW
+                     ((x, y), (x, y)),  # C = C
                      ]
-    right_rotation = [((row, col - 1), (row + 1, col)),  # N = E
-                      ((row + 1, col), (row, col + 1)),  # E = S
-                      ((row, col + 1), (row - 1, col)),  # S = W
-                      ((row - 1, col), (row, col - 1)),  # W = N
-                      ((row - 1, col + 1), (row - 1, col - 1)),  # SW = NW
-                      ((row - 1, col - 1), (row + 1, col - 1)),  # NW = NE
-                      ((row + 1, col - 1), (row + 1, col + 1)),  # NE = SE
-                      ((row + 1, col + 1), (row - 1, col + 1)),  # SE = SW
-                      ((row, col), (row, col)),  # C = C
+    right_rotation = [((x, y - 1), (x + 1, y)),  # N = E
+                      ((x + 1, y), (x, y + 1)),  # E = S
+                      ((x, y + 1), (x - 1, y)),  # S = W
+                      ((x - 1, y), (x, y - 1)),  # W = N
+                      ((x - 1, y + 1), (x - 1, y - 1)),  # SW = NW
+                      ((x - 1, y - 1), (x + 1, y - 1)),  # NW = NE
+                      ((x + 1, y - 1), (x + 1, y + 1)),  # NE = SE
+                      ((x + 1, y + 1), (x - 1, y + 1)),  # SE = SW
+                      ((x, y), (x, y)),  # C = C
                       ]
     if direction == DIRECTION_LEFT:
         rotation = left_rotation
@@ -766,60 +750,74 @@ def rotate(board, block, direction=DIRECTION_LEFT):
     return new_board
 
 
+def winner(board, players):
+    if len(board) == 36:
+        return Player(None, None)  # is a tie
+    winners = []
+    for player in players:
+        if check_cols(board, player) or check_rows(board, player) or check_diagonals(board, player):
+            winners.append(player)
+    if len(winners) == 2:
+        return Player(None, None)  # is a tie
+    elif len(winners) == 1:
+        return winners[0]
+    return None
+
+
 def check_rows(board, player):
-    for row in range(6):
-        count, maxcount = 0, 0
-        for col in range(6):
-            if ((row, col), player) in board.items():
+    for y in range(6):
+        count, max_count = 0, 0
+        for x in range(6):
+            if ((x, y), player) in board.items():
                 count += 1
-                maxcount = count
+                max_count = count
             else:
                 count = 0
-        if maxcount >= 5:
+        if max_count >= 5:
             return True
     return False
 
 
 def check_cols(board, player):
-    for col in range(6):
-        count, maxcount = 0, 0
-        for row in range(6):
-            if ((row, col), player) in board.items():
+    for x in range(6):
+        count, max_count = 0, 0
+        for y in range(6):
+            if ((x, y), player) in board.items():
                 count += 1
-                maxcount = count
+                max_count = count
             else:
                 count = 0
-    if maxcount >= 5:
-        return True
+        if max_count >= 5:
+            return True
     return False
 
 
 def check_diagonals(board, player):
     # check descending diagonals
     # there are 3 diagonals that can hold a line of 5
-    for col_offset in range(-1, 2):
-        count, maxcount = 0, 0
-        for row in range(6):
-            interval = col_offset + row
-            if 0 <= interval < 6 and ((row, interval), player) in board.items():
+    for y_offset in range(-1, 2):
+        count, max_count = 0, 0
+        for x in range(6):
+            y = y_offset + x
+            if 0 <= y < 6 and ((x, y), player) in board.items():
                 count += 1
-                maxcount = count
+                max_count = count
             else:
                 count = 0
-        if maxcount >= 5:
+        if max_count >= 5:
             return True
     # check ascending diagonals
     # there are 3 diagonals that can hold a line of 5
-    for col_offset in range(-1, 2):
-        count, maxcount = 0, 0
-        for row in range(6):
-            interval = col_offset - row + 5
-            if 0 <= interval < 6 and ((row, interval), player) in board.items():
+    for y_offset in range(-1, 2):
+        count, max_count = 0, 0
+        for x in range(6):
+            y = y_offset - x + 5
+            if 0 <= y < 6 and ((x, y), player) in board.items():
                 count += 1
-                maxcount = count
+                max_count = count
             else:
                 count = 0
-        if maxcount >= 5:
+        if max_count >= 5:
             return True
     return False
 
@@ -860,18 +858,6 @@ def position_in_block(position, block):
         return Position(position.x, position.y - 3)
     elif block == 3:
         return Position(position.x - 3, position.y - 3)
-
-
-# todo: remove?
-# def position_in_board(position, block):
-#     if block == 0:
-#         return Position(position.x, position.y)
-#     elif block == 1:
-#         return Position(position.x + 3, position.y)
-#     elif block == 2:
-#         return Position(position.x, position.y + 3)
-#     elif block == 3:
-#         return Position(position.x + 3, position.y + 3)
 
 
 def block_neighbor(block, direction):

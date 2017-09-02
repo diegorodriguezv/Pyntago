@@ -698,6 +698,16 @@ class Game:
                 self.manager.post(RequestDirectionCursorSelectEvent())
 
 
+def print_board(board):
+    for y in range(6):
+        for x in range(6):
+            if (x, y) in board:
+                print("{} ".format(board[(x, y)].name[0]), end='')
+            else:
+                print("  ", end='')
+        print()
+
+
 def rotate(board, block, direction=DIRECTION_LEFT):
     # calculate the position for the center of the block to rotate
     if block == 0:
